@@ -4,7 +4,7 @@ date: "Jason Ching Yuen, Siu"
 output:
   html_document:
     after_body: tutorial-footer.html
-    css: assignment.css
+    css: report.css
     df_print: paged
     toc: true
     toc_float: true
