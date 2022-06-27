@@ -1,0 +1,229 @@
+---
+title: "Exploratory analysis: what factors change our wages?"
+date: "Jason Ching Yuen, Siu"
+output:
+  html_document:
+    after_body: tutorial-footer.html
+    css: assignment.css
+    df_print: paged
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE, 
+  collapse = TRUE,
+  echo = FALSE,
+  comment = "#",
+  fig.height = 4,
+  fig.width = 8,
+  out.width = "100%",
+  fig.align = "center",
+  fig.retina = 4,
+  cache = TRUE,
+  options(digits=4)
+)
+```
+
+
+```{r dataplot, fig.height = 3,  include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(patchwork)
+library(workflows)
+library(yowie)
+library(gratia)
+library(kableExtra)
+```
+
+```{r echo=TRUE, eval=FALSE}
+# Install package from github, version 0.1.1. 
+# There is a version on CRAN, version 0.1.0
+# which is not up to date. 
+remotes::install_github("numbats/yowie")
+library(yowie)
+```
+
+### Data description
+
+The National Longitudinal Survey of Youth has tracked a cohort of people in the USA since 1979, recording their wages over the years. The data also contains some demographic information including gender, race and education. We are here to explore how these factors affect the wage.
+
+
+
+The variable `wage` shows the average wage of the individual for the survey year, `exp` measures the experience in the workforce, `gender` has only two values, male and female, and race has just three categories hispanic, black, or "non-black, non-hispanic"
+
+This data has been made available in the R package `yowie`, and can be accessed with:
+
+
+```{r yowieplots 1a}
+a1 <-   ggplot(data = wages, aes(exp,wage))+
+   geom_point(size=2)+
+      geom_smooth(method = "loess", size = 2,se = FALSE)+
+    scale_y_log10() +
+   facet_grid (gender~race)
+
+```
+
+
+
+
+### Exploratory plots
+First, let's plot facetted by covariates gender and race, of the data, with a loess fit overlaid. Then we plot only the loess fits for the 6 groups, in the one plot, coloured by group. 
+
+We make a transformation on wage, show this transformed variable as the response.
+
+```{r aii}
+wages_cat_GR <- wages %>% 
+  select(wage,gender,race,exp)  %>%
+  mutate(logWage = log(wage),
+         type = case_when(
+    (gender=="m"& race =="n")~ "m.n",
+    (gender=="m"& race =="h")~ "m.h",
+    (gender=="m" & race =="b")~ "m.b",
+    (gender=="f" & race =="n")~ "f.n",
+    (gender=="f" & race =="h")~ "f.h",
+    (gender=="f" & race =="b")~ "f.b") )
+wages_cat_GR$type = as_factor(wages_cat_GR$type)
+    
+a2 <-   ggplot(data = wages_cat_GR, 
+               aes(exp,wage,color=type,group=type))+
+      geom_smooth(se = FALSE, size=2)+
+        scale_y_log10()+
+          labs(x="Experience",y="Log wage")+
+          theme(legend.position="bottom") +
+          theme(legend.title=element_blank())
+
+a1+a2
+```
+
+- Scaling wage is necessary to respond skewness towards extreme values; i.e., the difference between highest and lowest wage (174.57).
+
+- The relationship is positive similarly, with each line being smoothly linear however the data has no linearity.
+
+
+### Should interaction terms be included?
+
+```{r}
+ggplot(wages_cat_GR) + geom_boxplot(aes(exp, type)) 
+```
+
+```{r yowiefit1}
+# Model code here
+lm_mod <- 
+  linear_reg() %>% 
+  set_engine("lm")
+
+nrc_lm_fit <- 
+  lm_mod %>% 
+  fit(log(wage) ~ exp+gender+race, data = wages_cat_GR)
+
+nrc_lm_test_pred <- augment(nrc_lm_fit, wages_cat_GR)
+
+```
+
+
+```{r}
+b1 <- ggplot(nrc_lm_test_pred, aes( exp,`.pred`, color=type,group=type))+ 
+  geom_smooth(se = FALSE, size=.5, method = "lm")+        
+  theme(legend.position="bottom") +
+  theme(legend.title=element_blank())
+```
+
+
+There is no interaction between the independent variables. 
+
+This is because, based on the preliminary plots, 1) there are not going to be potential structural differences between types (e.g., m.h, m.n and m.b). 2) If the slopes between regressions lines are distinctly different, then there will be an interaction effect. But since now the slopes and intercepts are similar, making them more like a parallel, thus there is no interaction effect. 
+
+3) To check the correlation between a categorical and a numeric variable, the boxes in boxplot are overlapping, which suggests that there is weak correlation.
+
+
+### Write down the model equation, in as understandable form as possible. 
+The equation is $$log(wage)  = (exp *  0.055) + (genderm  *  0.156) + (raceh   *  0.060) + (racen  *  0.098) + 1.321  $$
+
+### Model diagnostic
+
+Make the suite of diagnostic plots, histogram of residuals, normal probability plot of residuals, residuals vs fitted, and observed vs fitted.
+
+```{r yowie_lmplots}
+# Plot of model
+lmfit <- lm(log(wage) ~ exp+gender+race, data = wages_cat_GR)
+biv <- appraise(lmfit)
+
+b1+biv
+```
+
+
+### Report the RMSE. 
+The RMSE is `r sprintf("MSE=%0.2f", sqrt(mean(lmfit$residuals^2)))`.
+
+### Model summary (including any problems)
+
+- The RMSE is only `r sprintf("MSE=%0.2f", sqrt(mean(lmfit$residuals^2)))`, which is higher than 0.5. 
+- `r summary(lmfit)$adj.r.squared` of the data fit the regression model., which is lower than 0.6. 
+- Also, a good linear model's residual should be normally distributed; but here extreme points deviate from the line in QQplot.
+
+Therefore, with the low R-squared value, high RMSE, and normal probaility of residual plot not being N.D, it is not considered a good model to accurately predict the data.
+
+
+### Fit a GAM model
+```{r yowiefit2, results='hide'}
+# GAM models
+library(mgcv)
+library(gratia)
+
+### details of setting fs or cat can be found here :
+wage_gam <- mgcv::gam(log(wage) ~s(exp)+gender +race
+                      , data = wages_cat_GR)
+
+# Model fit
+tidy(wage_gam)
+glance(wage_gam)
+
+nrc_gam_test_pred <- augment(wage_gam,
+                             newdata= wages_cat_GR) %>%
+  rename(.pred = .fitted) %>%
+  mutate(.resid = wage - .pred)
+metrics(nrc_gam_test_pred, truth = wage, 
+        estimate = .pred)
+```
+
+
+```{r yowie_gamplots}
+# Your plot code here
+
+c1 <- ggplot (aes(x= exp, y = .pred, 
+        colour = interaction(gender, race)),
+        data = nrc_gam_test_pred)+
+  geom_line()+
+  theme(legend.position="bottom") +
+  theme(legend.title=element_blank())
+```
+### Make the suite of diagnostic plots, histogram of residuals, normal probability plot of residuals, residuals vs fitted, and observed vs fitted.
+
+```{r}
+c2 <- appraise(wage_gam)
+c1+c2
+```
+
+
+### Report the RMSE.
+The RMSE is `r sprintf("%0.2f", sqrt(mean(wage_gam$residuals^2)))`.
+
+
+### GAM model summary (including any problems)
+
+The following summarises the model with a couple of sentences including any problems with the model.
+
+- The RMSE is high with `r sprintf("%0.2f", sqrt(mean(wage_gam$residuals^2)))`; higher than the lm.
+- Here extreme points deviate from the line in QQplot.
+
+Therefore, with the high RMSE and residual plot not being N.D, it is not considered a good model to accurately predict the data; but RMSE and other metrics are slightly better than LM,thus it is better than LM.
+
+### Which of the two models is best for this data? 
+
+MLE is slightly better with lower RMSE, even though both's performance is similar. Granted, MLE's explanation is easier with linear relationship and simpler equation. 
+
