@@ -1,2 +1,2 @@
 # Wage
-https://www.jason-siu.com/Wage/report.html
+https://www.jasoncysiu.github.io/Wage/report.html
